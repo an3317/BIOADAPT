@@ -1,12 +1,20 @@
+from pathlib import Path
 import os
 import re
 import json
-import joblib
+import logging
+import multiprocessing
+import time
+import functools
+
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from fpdf import FPDF
+from tqdm import tqdm
+import psutil
+from joblib import Parallel, delayed
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import StratifiedKFold, GridSearchCV, cross_val_score, cross_val_predict
 from sklearn.preprocessing import StandardScaler
@@ -18,23 +26,25 @@ from sklearn.svm import SVC
 from sklearn.metrics import (confusion_matrix, roc_auc_score, precision_recall_curve, auc,
                              matthews_corrcoef, f1_score, make_scorer)
 from sklearn.inspection import permutation_importance, PartialDependenceDisplay
-from imblearn.over_sampling import RandomOverSampler
-from imblearn.under_sampling import RandomUnderSampler
-import warnings
-from xgboost import XGBClassifier
-from joblib import Parallel, delayed
 from sklearn.base import clone, BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
+from imblearn.over_sampling import RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline as ImbPipeline
+from xgboost import XGBClassifier
 
-import multiprocessing
-import time
-import functools
-from tqdm import tqdm
-import psutil
-import threading
+from pipeline.config_loader import Config
+from pipeline.logging_conf import setup_logger
+from pipeline.data_loading import load_csvs
+from pipeline.transformers import Log2NormalizationAndBatchCorrectionTransformer, FeatureOutlierRemover
+from pipeline.utils import (
+    ensure_directory_exists,
+    show_feature_ranges,
+    get_feature_selection_step,
+    get_param_grid,
+    get_model,
+)
 
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Set environment variables for BLAS libraries to use 16 threads
 os.environ["OMP_NUM_THREADS"] = "16"
@@ -270,7 +280,7 @@ def calculate_feature_gradients(model, X, selected_features):
             importances = np.abs(coef)
     else:
         importances = np.zeros(len(selected_features))
-        warnings.warn("Estimator does not have 'feature_importances_' or 'coef_'. Setting all importances to zero.")
+        # warnings.warn("Estimator does not have 'feature_importances_' or 'coef_'. Setting all importances to zero.")
     gradients = {'feature': selected_features, 'variance': importances}
     return pd.DataFrame(gradients)
 
@@ -541,21 +551,7 @@ def print_cpu_usage(context=""):
     usage = psutil.cpu_percent(interval=1)
     print(f"[{context}] CPU usage: {usage}%")
 
-def monitor_cpu(interval=2):
-    while not monitor_cpu.stop_event.is_set():
-        usage = psutil.cpu_percent(interval=None)
-        # Uncomment the next line to reduce logging overhead if needed
-        # print(f"[CPU Monitor] CPU usage: {usage}%")
-        monitor_cpu.stop_event.wait(interval)
-monitor_cpu.stop_event = threading.Event()
 
-def start_cpu_monitor():
-    t = threading.Thread(target=monitor_cpu, args=(2,), daemon=True)
-    t.start()
-    return t
-
-def stop_cpu_monitor():
-    monitor_cpu.stop_event.set()
 
 def track_time(func):
     def wrapper(*args, **kwargs):
@@ -567,51 +563,56 @@ def track_time(func):
     return wrapper
 
 @track_time
-def machine_learning_pipeline(
-    data, 
-    response, 
-    selected_algorithm, 
-    selected_feature_selection, 
-    output_folder, 
-    random_seeds=[42, 43, 44, 45, 46],
-    use_outlier_detection=False,
-    outlier_method=None,  # e.g., 'iqr', 'zscore', 'isolation_forest', 'pca'
-    iqr_threshold=0.05, 
-    zscore_threshold=0.05, 
-    zscore_limit=3.0,
-    iso_forest_threshold=0.05,
-    pca_reconstruction_error_threshold=0.1,
-    n_components_pca=None,
-    run_extra_analysis=False
-):
-    # Start CPU monitor thread (optional)
-    cpu_monitor_thread = start_cpu_monitor()
+# pipeline/core.py
 
+
+
+def machine_learning_pipeline(cfg: Config) -> None:
+    """Run the end‑to‑end ML pipeline based on a Config object."""
+    # 1) Unpack runtime settings
+    data_paths = [str(p) for p in cfg.data.paths]
+    response = cfg.data.response.lower()
+    selected_algorithm = cfg.pipeline.algorithm
+    selected_feature_selection = cfg.pipeline.feature_selection
+    output_folder = str(cfg.pipeline.output_folder)
+    random_seeds = cfg.cv.random_seeds
+
+    # 2) Set up logging
+    logger = setup_logger(Path(output_folder) / "run.log")
+    logger.info("Pipeline started")
+    logger.debug("Config: %s", cfg)
+
+    # 3) Load & validate data
+    datasets = load_csvs(data_paths)
+    if isinstance(datasets, pd.DataFrame):
+        data = datasets
+    else:
+        data = pd.concat(datasets, ignore_index=True)
+    logger.info(f"Data loaded & schema-validated. Shape: {data.shape}")
+
+
+    # 5) Basic system info
     num_cores = multiprocessing.cpu_count()
-    print(f"Number of CPU cores: {num_cores}")
-    print_cpu_usage("After CPU core check")
-    
-    main_folder = output_folder
-    ensure_directory_exists(main_folder)
-    print("Output folder set to:", main_folder)
-    
-    data.columns = map(str.lower, data.columns)
-    response = response.lower()
+    logger.info(f"Number of CPU cores: {num_cores}")
+
+    # 6) Prepare output directory
+    ensure_directory_exists(output_folder)
+    logger.info(f"Output folder set to: {output_folder}")
+
+    # 7) Preprocess DataFrame
+    data.columns = list(map(str.lower, data.columns))
     if 'patient_id' in data.columns:
         data = data.drop(columns=['patient_id'])
     X = data.drop(columns=[response])
     y = data[response]
-
     constant_columns = [col for col in X.columns if X[col].nunique() <= 1]
     if constant_columns:
-        print("Constant columns found:", constant_columns)
+        logger.info(f"Dropping constant columns: {constant_columns}")
         X = X.drop(columns=constant_columns)
+    logger.info(f"Data preprocessed. Shape of X: {X.shape}")
 
-    print("Data preprocessed. Shape of X:", X.shape)
-    print_cpu_usage("After data preprocessing")
-    
+    # 8) Handle class imbalance
     class_counts = y.value_counts()
-    sampling_method = None
     sampler = None
     if min(class_counts) / max(class_counts) < 0.5:
         if min(class_counts) * 2 < max(class_counts):
@@ -620,257 +621,139 @@ def machine_learning_pipeline(
         else:
             sampler = RandomUnderSampler(random_state=42)
             sampling_method = 'Undersampling'
-    if sampler:
-        print("Sampling method set to:", sampling_method)
-        print_cpu_usage("After sampling setup")
-    
-    # Reuse the outlier remover if outlier detection is enabled
+        logger.info(f"Sampling method set to: {sampling_method}")
+
+    # 9) Feature outlier removal (optional)
     outlier_remover_instance = None
-    if use_outlier_detection and outlier_method is not None:
-        print("Starting outlier detection using method:", outlier_method)
-        outlier_remover_instance = FeatureOutlierRemover(
-            method=outlier_method,
-            iqr_threshold=iqr_threshold,
-            zscore_threshold=zscore_threshold,
-            zscore_limit=zscore_limit,
-            iso_forest_threshold=iso_forest_threshold,
-            pca_reconstruction_error_threshold=pca_reconstruction_error_threshold,
-            n_components_pca=n_components_pca
-        )
+    use_outlier_detection = cfg.pipeline.use_outlier_detection
+    outlier_method = getattr(cfg.pipeline, 'outlier_method', None)
+    if use_outlier_detection and outlier_method:
+        logger.info(f"Starting outlier detection using method: {outlier_method}")
+        outlier_remover_instance = FeatureOutlierRemover(method=outlier_method,
+                                                         iqr_threshold=cfg.pipeline.iqr_threshold,
+                                                         zscore_threshold=cfg.pipeline.zscore_threshold,
+                                                         zscore_limit=cfg.pipeline.zscore_limit,
+                                                         iso_forest_threshold=cfg.pipeline.iso_forest_threshold,
+                                                         pca_reconstruction_error_threshold=cfg.pipeline.pca_reconstruction_error_threshold,
+                                                         n_components_pca=cfg.pipeline.n_components_pca)
         X_temp = outlier_remover_instance.fit_transform(X)
         n_features = X_temp.shape[1]
-        print(f"After outlier detection, number of features: {n_features}")
+        logger.info(f"After outlier detection, number of features: {n_features}")
     else:
         n_features = X.shape[1]
-        print("Outlier detection skipped. Number of features:", n_features)
-    print_cpu_usage("After outlier detection")
-    
+        logger.info(f"No outlier detection. Number of features: {n_features}")
+
+    # 10) Determine k-range for feature selection
     k_values = list(range(10, 65, 5))
-    k_range = [k for k in k_values if k <= n_features]
-    if not k_range:
-        k_range = [min(10, n_features)]
-    print("Candidate k values for feature selection:", k_range)
-    
+    k_range = [k for k in k_values if k <= n_features] or [min(10, n_features)]
+    logger.info(f"Candidate k values for feature selection: {k_range}")
+
+    # 11) Build the sklearn/imb pipeline
     fs_step = get_feature_selection_step(selected_feature_selection)
     model = get_model(selected_algorithm)
-    
-    # -----------------------------
-    # NEW: Insert Log2 Normalization and Batch Correction Step at the very beginning
-    # -----------------------------
-    steps = [('norm_batch_corr', Log2NormalizationAndBatchCorrectionTransformer(batch_col='batch')),
-             ('scaler', StandardScaler())]
-    if sampler is not None:
+    steps = [
+        ('norm_batch_corr', Log2NormalizationAndBatchCorrectionTransformer(batch_col='batch')),
+        ('scaler', StandardScaler())
+    ]
+    if sampler:
         steps.append(('sampler', sampler))
-    if use_outlier_detection and outlier_method is not None and outlier_remover_instance is not None:
-        print("Adding outlier removal step to pipeline.")
+    if outlier_remover_instance:
         steps.append(('outlier_removal', outlier_remover_instance))
-    else:
-        print("No outlier removal step added.")
-    steps.append(fs_step)
-    steps.append(('est', model))
-    print("Pipeline steps constructed:", [s[0] for s in steps])
-    
+        logger.info("Added outlier_removal step to pipeline")
+    steps += [fs_step, ('est', model)]
+    logger.info(f"Pipeline steps: {[name for name, _ in steps]}")
     pipe = ImbPipeline(steps=steps)
-    print("Pipeline object created.")
-    print_cpu_usage("After pipeline construction")
-    
+
+    # 12) Set up grid search
     param_grid = get_param_grid(selected_feature_selection, selected_algorithm, k_range)
     mcc_scorer = make_scorer(matthews_corrcoef)
     f1_scorer = make_scorer(f1_score, average='weighted')
-    
-    all_results_across_seeds = []
-    total_seeds = len(random_seeds)
-    seed_progress = tqdm(total=total_seeds, desc="Pipeline Progress", unit="seed")
-    
+
+    # 13) Cross-validation loop
+    all_results = []
+    seed_progress = tqdm(total=len(random_seeds), desc="Pipeline Progress", unit="seed")
     for idx, seed in enumerate(random_seeds, start=1):
-        print(f"Processing seed {idx}/{total_seeds} (seed={seed}) ...")
-        seed_run_folder = os.path.join(main_folder, f"seed_{seed}")
-        ensure_directory_exists(seed_run_folder)
-    
-        # Outer CV now uses 10 folds
+        logger.info(f"Processing seed {idx}/{len(random_seeds)} (seed={seed})")
+        seed_folder = os.path.join(output_folder, f"seed_{seed}")
+        ensure_directory_exists(seed_folder)
+
         outer_cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=seed)
         inner_cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=seed)
-    
-        grid_search = GridSearchCV(
-            estimator=pipe, 
-            param_grid=param_grid, 
-            cv=inner_cv, 
-            scoring={'MCC': mcc_scorer, 'F1': f1_scorer},
-            refit='MCC',
-            n_jobs=-1  # Use all cores for grid search
-        )
-    
-        print("Starting cross-validation for seed", seed)
-        cross_val_scores = cross_val_score(grid_search, X, y, cv=outer_cv, scoring=mcc_scorer, n_jobs=-1)
-        mean_cross_val_score = np.mean(cross_val_scores)
-        print(f"Cross-validation done for seed {seed}. Mean MCC: {mean_cross_val_score:.4f}")
-        print_cpu_usage(f"After cross-validation for seed {seed}")
-    
-        print("Fitting grid search for seed", seed)
+        grid_search = GridSearchCV(pipe, param_grid, cv=inner_cv,
+                                   scoring={'MCC': mcc_scorer, 'F1': f1_scorer},
+                                   refit='MCC', n_jobs=-1)
+
+        # Out‑of‑sample MCC
+        cv_scores = cross_val_score(grid_search, X, y, cv=outer_cv,
+                                    scoring=mcc_scorer, n_jobs=-1)
+        logger.info(f"Seed {seed} CV MCC: {np.mean(cv_scores):.4f}")
+
+        # Fit best model
         grid_search.fit(X, y)
         best_model = grid_search.best_estimator_
-        print("Grid search completed for seed", seed)
-        print_cpu_usage(f"After grid search for seed {seed}")
-    
-        all_features = X.columns
-        removed_by_outlier = []
-        if use_outlier_detection and outlier_method is not None:
-            if 'outlier_removal' in best_model.named_steps:
-                removed_by_outlier = best_model.named_steps['outlier_removal'].get_removed_features()
-            remaining_features_after_outlier = [f for f in all_features if f not in removed_by_outlier]
+
+        # Feature tracking
+        removed = (best_model.named_steps['outlier_removal'].get_removed_features()
+                   if 'outlier_removal' in best_model.named_steps else [])
+        logger.info(f"Seed {seed} features removed by outlier: {removed}")
+        selector = best_model.named_steps.get('selection')
+        if selector and hasattr(selector, 'get_support'):
+            mask = selector.get_support()
+            selected_features = [f for f, m in zip(X.columns, mask) if m]
         else:
-            remaining_features_after_outlier = list(all_features)
-        print(f"Seed {seed}: Features removed by outlier detection: {removed_by_outlier}")
-    
-        if selected_feature_selection in ['anova','mutual_info','lasso','rfe']:
-            selector = best_model.named_steps['selection']
-            support_mask = selector.get_support()
-            selected_features = [f for (f, m) in zip(remaining_features_after_outlier, support_mask) if m]
-        else:
-            selected_features = remaining_features_after_outlier
-        print(f"Seed {seed}: Selected features: {selected_features}")
-    
-        print("Running cross_val_predict for seed", seed)
+            selected_features = list(X.columns)
+        logger.info(f"Seed {seed} selected features: {selected_features}")
+
+        # Predictions & metrics
         y_cv_pred = cross_val_predict(grid_search, X, y, cv=outer_cv, n_jobs=-1)
-        cv_cm_model = confusion_matrix(y, y_cv_pred)
-    
-        if hasattr(best_model.named_steps['est'], "predict_proba"):
-            print("Running cross_val_predict (predict_proba) for seed", seed)
-            y_cv_proba = cross_val_predict(grid_search, X, y, cv=outer_cv, method='predict_proba', n_jobs=-1)[:,1]
-            cv_auc_score = roc_auc_score(y, y_cv_proba)
-            precision_cv, recall_cv, _ = precision_recall_curve(y, y_cv_proba)
-            cv_aupr_score = auc(recall_cv, precision_cv)
-        else:
-            cv_auc_score = None
-            cv_aupr_score = None
-    
-        cv_f1_score_val = f1_score(y, y_cv_pred, average='weighted')
-        y_train_pred = best_model.predict(X)
-        train_cm_model = confusion_matrix(y, y_train_pred)
-    
-        if hasattr(best_model.named_steps['est'], "predict_proba"):
-            y_train_proba = best_model.predict_proba(X)[:,1]
-            train_auc_score = roc_auc_score(y, y_train_proba)
-            precision_train, recall_train, _ = precision_recall_curve(y, y_train_proba)
-            train_aupr_score = auc(recall_train, precision_train)
-        else:
-            train_auc_score = None
-            train_aupr_score = None
-    
-        train_f1_score_val = f1_score(y, y_train_pred, average='weighted')
-        model_save_path = os.path.join(seed_run_folder, 'top_model.pkl')
-        joblib.dump(best_model, model_save_path)
-        print(f"Seed {seed}: Model saved to {model_save_path}")
-    
-        if run_extra_analysis:
-            print(f"Seed {seed}: Running gradient analysis...")
-            gradient_img_path, ice_img_paths = run_gradient_analysis(best_model, X, selected_features, seed_run_folder)
-            print(f"Seed {seed}: Gradient analysis completed.")
-    
-            print(f"Seed {seed}: Running permutation importance...")
-            perm_img_path = plot_permutation_importance(best_model, X, y, selected_features, seed_run_folder)
-            print(f"Seed {seed}: Permutation importance completed.")
-    
-            print(f"Seed {seed}: Computing performance drop metrics...")
-            performance_drop_images = integrate_into_pipeline(X, y, selected_features, best_model.named_steps['est'], seed_run_folder)
-            print(f"Seed {seed}: Performance drop analysis completed.")
-        else:
-            gradient_img_path, ice_img_paths = None, []
-            perm_img_path = None
-            performance_drop_images = []
-    
-        # Save confusion matrix plots
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(cv_cm_model, annot=True, fmt='d', cmap='Blues', xticklabels=[0, 1], yticklabels=[0, 1])
-        plt.title('CV Confusion Matrix (Out-of-sample predictions)')
-        plt.xlabel('Predicted')
-        plt.ylabel('Actual')
-        cv_cm_img_path = os.path.join(seed_run_folder, 'cv_confusion_matrix.png')
-        plt.tight_layout()
-        plt.savefig(cv_cm_img_path)
-        plt.close()
-        print(f"Seed {seed}: CV Confusion Matrix plot saved to {cv_cm_img_path}.")
-    
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(train_cm_model, annot=True, fmt='d', cmap='Blues', xticklabels=[0, 1], yticklabels=[0, 1])
-        plt.title('Training Confusion Matrix (In-sample)')
-        plt.xlabel('Predicted')
-        plt.ylabel('Actual')
-        train_cm_img_path = os.path.join(seed_run_folder, 'train_confusion_matrix.png')
-        plt.tight_layout()
-        plt.savefig(train_cm_img_path)
-        plt.close()
-        print(f"Seed {seed}: Training Confusion Matrix plot saved to {train_cm_img_path}.")
-    
-        feature_ranges = show_feature_ranges(X[selected_features])
-        feature_ranges_display = feature_ranges.head(10).to_string()
-    
-        results_text = (
-            f"Top Model Results\n"
-            f"Model: {selected_algorithm}\n"
-            f"Feature Selection: {selected_feature_selection}\n"
-            f"Use Outlier Detection: {use_outlier_detection}\n"
-            f"Outlier Method: {outlier_method if use_outlier_detection else 'N/A'}\n"
-            f"Removed Outlier Features: {removed_by_outlier}\n"
-            f"Seed: {seed}\n"
-            f"Resampling Method: {sampling_method if sampling_method else 'None'}\n"
-            f"Selected Features: {selected_features}\n"
-            f"Number of Selected Features: {len(selected_features)}\n"
-            f"Hyperparameters: {grid_search.best_params_}\n"
-            f"CV MCC: {mean_cross_val_score:.4f}\n"
-            f"CV F1 Score: {cv_f1_score_val:.4f}\n"
-            f"CV AUC: {cv_auc_score if cv_auc_score is not None else 'N/A'}\n"
-            f"CV AUPR: {cv_aupr_score if cv_aupr_score is not None else 'N/A'}\n"
-            f"Feature Ranges (First 10 Features):\n{feature_ranges_display}"
-        )
-    
-        results_text1 = results_text + "\nRanked Models Information:\n"
-        results_text1 += f"Rank 1:\n"
-        results_text1 += f"    Algorithm: {selected_algorithm}\n"
-        results_text1 += f"    Feature Selection Method: {selected_feature_selection}\n"
-        results_text1 += f"    CV MCC: {mean_cross_val_score:.4f}\n"
-        results_text1 += f"    CV F1 Score: {cv_f1_score_val:.4f}\n"
-        results_text1 += f"    CV AUC: {cv_auc_score if cv_auc_score is not None else 'N/A'}\n"
-        results_text1 += f"    CV AUPR: {cv_aupr_score if cv_aupr_score is not None else 'N/A'}\n"
-        results_text1 += f"    Selected Features: {selected_features}\n"
-        results_text1 += f"    CV Confusion Matrix:\n{cv_cm_model}\n"
-    
-        images_to_include = [img for img in ([gradient_img_path, perm_img_path, cv_cm_img_path, train_cm_img_path] + ice_img_paths + performance_drop_images) if img is not None]
-        print("Images to be included in PDF:", images_to_include)
-    
-        output_pdf = os.path.join(seed_run_folder, 'model_performance_report.pdf')
-        create_pdf_report(selected_algorithm, selected_feature_selection, results_text1, images_to_include, output_pdf, cms={1: cv_cm_model})
-    
-        seed_result = {
+        cv_cm = confusion_matrix(y, y_cv_pred)
+        cv_auc = (roc_auc_score(y, cross_val_predict(grid_search, X, y,
+                      cv=outer_cv, method='predict_proba', n_jobs=-1)[:,1])
+                  if hasattr(best_model.named_steps['est'], 'predict_proba') else None)
+        cv_f1 = f1_score(y, y_cv_pred, average='weighted')
+
+        # Save model & reports
+        joblib.dump(best_model, os.path.join(seed_folder, 'model.pkl'))
+        gradient_img, ice_imgs = run_gradient_analysis(best_model, X, selected_features, seed_folder)
+        perm_img = plot_permutation_importance(best_model, X, y, selected_features, seed_folder)
+        perf_imgs = integrate_into_pipeline(X, y, selected_features, best_model.named_steps['est'], seed_folder)
+
+        # Confusion matrices
+        fig, ax = plt.subplots(figsize=(8,6))
+        sns.heatmap(cv_cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+        fig.savefig(os.path.join(seed_folder, 'cv_confusion.png'))
+        plt.close(fig)
+
+        # PDF report
+        images = [gradient_img, perm_img] + ice_imgs + perf_imgs + \
+                 [os.path.join(seed_folder, 'cv_confusion.png')]
+        create_pdf_report(selected_algorithm, selected_feature_selection,
+                          f"Seed {seed} results", images,
+                          os.path.join(seed_folder, 'report.pdf'),
+                          cms={1: cv_cm})
+
+        # Collect summary
+        all_results.append({
             'seed': seed,
-            'algorithm': selected_algorithm,
-            'feature_selection_method': selected_feature_selection,
-            'cv_mcc': mean_cross_val_score,
-            'cv_f1_score': cv_f1_score_val,
-            'cv_auc': cv_auc_score,
-            'cv_aupr': cv_aupr_score,
-            'num_features': len(selected_features),
-            'selected_features': json.dumps(selected_features),
-            'removed_outlier_features': json.dumps(removed_by_outlier)
-        }
-        all_results_across_seeds.append(seed_result)
-    
-        seed_results_df = pd.DataFrame([seed_result])
-        seed_csv_path = os.path.join(seed_run_folder, 'seed_results.csv')
-        seed_results_df.to_csv(seed_csv_path, index=False)
-    
+            'cv_mcc': np.mean(cv_scores),
+            'cv_f1': cv_f1,
+            'cv_auc': cv_auc,
+            'n_features': len(selected_features),
+        })
+
         seed_progress.update(1)
-    
+
     seed_progress.close()
-    
-    # Combine results from all seeds into one CSV file
-    results_df = pd.DataFrame(all_results_across_seeds)
-    combined_csv_path = os.path.join(main_folder, 'all_seeds_results.csv')
-    results_df.to_csv(combined_csv_path, index=False)
-    print("Combined results saved to:", combined_csv_path)
-    
-    print("Machine learning pipeline completed successfully.")
+
+    # Combine across seeds
+    results_df = pd.DataFrame(all_results)
+    results_df.to_csv(os.path.join(output_folder, 'all_seeds_results.csv'), index=False)
+    logger.info(f"Combined results saved to {output_folder}/all_seeds_results.csv")
+
+    # Finalize
     stop_cpu_monitor()
+    logger.info("Machine learning pipeline completed successfully.")
+
 
 def test_on_independent_dataset(model, independent_test, response, output_folder):
     # Remains unchanged from your original working code
