@@ -1,0 +1,14 @@
+# config.yaml  (place at repo root)
+data:
+  paths:
+    - data/train.csv        # relative or absolute
+  response: response        # name of target column
+
+pipeline:
+  algorithm: xgboost
+  feature_selection: mutual_info
+  use_outlier_detection: false
+  output_folder: results/
+
+cv:
+  random_seeds: [42, 43, 44, 45, 46]
