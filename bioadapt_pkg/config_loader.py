@@ -12,14 +12,7 @@ class CVConfig:
 class PipelineConfig:
     algorithm: str
     feature_selection: str
-    use_outlier_detection: bool
-    output_folder: Path
-    # pipeline/config_loader.py  (only the relevant part)
-
-@dataclass
-class PipelineConfig:
-    algorithm: str
-    feature_selection: str
+    explain: str = "none"                # ← add this!
     use_outlier_detection: bool = False
     outlier_method: str | None = None
     iqr_threshold: float = 0.05
