@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 import yaml
-import tomli  # optional: support pyproject.toml config later
 
 @dataclass
 class CVConfig:
