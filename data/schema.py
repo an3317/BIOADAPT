@@ -11,6 +11,20 @@ other_cols_pattern = r"^(?!response$|age$|sex$).*"
 
 training_schema = DataFrameSchema(
     {
+
+        "patient_id": Column(
+            None,             # no dtype enforcement
+            nullable=True,
+            required=False,
+            coerce=True
+        ),
+        "patient": Column(
+            None,
+            nullable=True,
+            required=False,
+            coerce=True
+        ),
+
         "response": Column(pa.Int, is_response, coerce=True),
         "age":      Column(pa.Float, is_age,   nullable=True, required=False, coerce=True),
         "sex":      Column(pa.String, is_sex,  nullable=True, required=False, coerce=True),
