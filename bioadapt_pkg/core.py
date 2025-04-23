@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 from bioadapt_pkg.config_loader import Config
 from bioadapt_pkg.logging_conf import setup_logger
 from bioadapt_pkg.data_loading import load_csvs
-from bioadapt_pkg.transformers import Log2NormalizationAndBatchCorrectionTransformer, FeatureOutlierRemover
+from bioadapt_pkg.transformers import Log2OrZscoreTransformer, FeatureOutlierRemover
 from bioadapt_pkg.utils import (
     ensure_directory_exists,
     show_feature_ranges,
