@@ -7,6 +7,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 from pathlib import Path
+import re
 
 import joblib
 import matplotlib.pyplot as plt
@@ -82,7 +83,13 @@ def plot_performance_drop(performance_drop, title, xlabel, ylabel, output_file):
     features = [item[0] for item in performance_drop]
     drops = [item[1] for item in performance_drop]
     plt.figure(figsize=(10, 6))
-    sns.barplot(x=drops, y=features, palette='viridis')
+    sns.barplot(
+        x=drops,                
+        y=features,             
+        hue=features,           
+        palette='viridis',     
+        legend=False            
+    )
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
@@ -123,6 +130,9 @@ def machine_learning_pipeline(cfg: Config) -> None:
     df_raw.columns = df_raw.columns.str.lower()
     if "patient_id" in df_raw.columns:
         df_raw = df_raw.drop(columns=["patient_id"])
+
+    if "patient" in df_raw.columns:
+        df_raw = df_raw.drop(columns=["patient"])    
 
     X = df_raw.drop(columns=[response_col])
     y = df_raw[response_col]
@@ -185,6 +195,10 @@ def machine_learning_pipeline(cfg: Config) -> None:
 
     # ───────────────────────── 10) grid search objects ─────────────────────
     param_grid = get_param_grid(feat_sel_method, algorithm, k_range)
+
+    logger.debug("Param grid keys: %s", list(param_grid.keys()))
+    logger.debug("Param grid sizes: %s", {k: len(v) for k, v in param_grid.items()})
+
     mcc_scorer = make_scorer(matthews_corrcoef)
     f1_scorer  = make_scorer(f1_score, average="weighted")
 
@@ -220,6 +234,8 @@ def machine_learning_pipeline(cfg: Config) -> None:
         selector     = best_model.named_steps.get("selection")
         if selector and hasattr(selector, "get_support"):
             selected_features = list(np.array(X.columns)[selector.get_support()])
+            logger.debug("Seed %d picked %d features: %s", seed, len(selected_features), selected_features[:5])
+
         else:
             selected_features = list(X.columns)
 
@@ -317,78 +333,6 @@ def machine_learning_pipeline(cfg: Config) -> None:
     pd.DataFrame(all_results).to_csv(output_root / "all_seeds_results.csv", index=False)
     logger.info("Combined summary saved to %s", output_root / "all_seeds_results.csv")
     logger.info("Pipeline completed successfully.")
-
-def test_on_independent_dataset(model, independent_test, response, output_folder):
-    # Remains unchanged from your original working code
-    ensure_directory_exists(output_folder)
-    independent_test.columns = map(str.lower, independent_test.columns)
-    response = response.lower()
-    if 'patient' in independent_test.columns:
-        independent_test = independent_test.drop(columns=['patient'])
-    
-    if response not in independent_test.columns:
-        raise ValueError(f"Response column '{response}' not found in the independent test dataset.")
-    
-    X_test = independent_test.drop(columns=[response])
-    y_test = independent_test[response]
-    
-    y_test_pred = model.predict(X_test)
-    if hasattr(model.named_steps['est'], "predict_proba"):
-        y_test_proba = model.predict_proba(X_test)[:, 1]
-        test_auc = roc_auc_score(y_test, y_test_proba)
-        precision, recall, _ = precision_recall_curve(y_test, y_test_proba)
-        test_aupr = auc(recall, precision)
-    else:
-        test_auc = None
-        test_aupr = None
-    
-    test_mcc = matthews_corrcoef(y_test, y_test_pred)
-    test_f1 = f1_score(y_test, y_test_pred, average='weighted')
-    test_cm = confusion_matrix(y_test, y_test_pred)
-    
-    selected_features = X_test.columns.tolist()
-    if hasattr(model, 'named_steps') and 'selection' in model.named_steps:
-        selector = model.named_steps['selection']
-        if hasattr(selector, 'get_support'):
-            mask = selector.get_support()
-            selected_features = X_test.columns[mask].tolist()
-    
-    feature_ranges = show_feature_ranges(X_test[selected_features])
-    feature_ranges_display = feature_ranges.head(10).to_string()
-    
-    results_text = (
-        f"Independent Test Results\n"
-        f"Test MCC: {test_mcc:.4f}\n"
-        f"Test F1 Score: {test_f1:.4f}\n"
-        f"Test AUC: {test_auc if test_auc is not None else 'N/A'}\n"
-        f"Test AUPR: {test_aupr if test_aupr is not None else 'N/A'}\n"
-        f"Selected Features: {selected_features}\n"
-        f"Number of Selected Features: {len(selected_features)}\n"
-        f"Feature Ranges (First 10 Features):\n{feature_ranges_display}"
-    )
-    
-    plt.figure(figsize=(8,6))
-    sns.heatmap(test_cm, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(y_test), yticklabels=np.unique(y_test))
-    plt.title('Independent Test Confusion Matrix')
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    test_cm_img_path = os.path.join(output_folder, 'test_confusion_matrix.png')
-    plt.tight_layout()
-    plt.savefig(test_cm_img_path)
-    plt.close()
-    
-    output_pdf = os.path.join(output_folder, 'independent_test_report.pdf')
-    create_pdf_report("Loaded Model", "N/A", results_text, [test_cm_img_path], output_pdf, cms={1: test_cm})
-    print("Independent test evaluation completed and PDF created.")
-    
-    # Return a dictionary of test metrics so they can be aggregated later.
-    return {
-        "test_mcc": test_mcc,
-        "test_f1": test_f1,
-        "test_auc": test_auc,
-        "test_aupr": test_aupr
-    }
-
 
 def main():
     import argparse
