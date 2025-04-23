@@ -10,5 +10,15 @@ pipeline:
   use_outlier_detection: false
   output_folder: results/
 
+    # --- outlier-detection config ----------------
+  use_outlier_detection: true           # true / false
+  outlier_method: pca                   # iqr | zscore | isolation_forest | pca 
+  iqr_threshold: 0.05                   #pca works
+  zscore_threshold: 0.05
+  zscore_limit: 3.0
+  iso_forest_threshold: 0.05
+  pca_reconstruction_error_threshold: 0.3
+  n_components_pca: 3                # null -> auto
+
 cv:
   random_seeds: [42, 43, 44, 45, 46]
