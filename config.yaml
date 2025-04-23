@@ -19,6 +19,7 @@ pipeline:
   iso_forest_threshold: 0.05
   pca_reconstruction_error_threshold: 0.3
   n_components_pca: 3                # null -> auto
+  explain: shap      # none | shap | permutation
 
 cv:
   random_seeds: [42, 43, 44, 45, 46]

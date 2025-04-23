@@ -8,20 +8,8 @@ from sklearn.ensemble import IsolationForest
 from sklearn.decomposition import PCA
 
 # -----------------------------
-# Log2 Normalization & Batch Correction
+#Normalization & Outlier Removal & Batch Correction
 # -----------------------------
-
-def combat_batch_correction(data: pd.DataFrame, batch_info: pd.Series) -> pd.DataFrame:
-    """
-    A placeholder batch correction: for each batch, subtract the batch-specific mean.
-    Replace with pyCombat or similar in production.
-    """
-    corrected = data.copy()
-    for batch in batch_info.unique():
-        mask = batch_info == batch
-        batch_mean = data.loc[mask].mean()
-        corrected.loc[mask] = data.loc[mask] - batch_mean
-    return corrected
 
 class Log2OrZscoreTransformer(BaseEstimator, TransformerMixin):
     """
@@ -162,3 +150,20 @@ class FeatureOutlierRemover(BaseEstimator, TransformerMixin):
 
     def get_removed_features(self) -> list[str]:
         return self.features_to_remove_
+    
+    
+# -----------------------------
+# Batch Correction (Under Construction)
+# -----------------------------
+
+def combat_batch_correction(data: pd.DataFrame, batch_info: pd.Series) -> pd.DataFrame:
+    """
+    A placeholder batch correction: for each batch, subtract the batch-specific mean.
+    Replace with pyCombat or similar in production.
+    """
+    corrected = data.copy()
+    for batch in batch_info.unique():
+        mask = batch_info == batch
+        batch_mean = data.loc[mask].mean()
+        corrected.loc[mask] = data.loc[mask] - batch_mean
+    return corrected
