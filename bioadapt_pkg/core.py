@@ -754,7 +754,6 @@ def machine_learning_pipeline(cfg: Config) -> None:
     logger.info(f"Combined results saved to {output_folder}/all_seeds_results.csv")
 
     # Finalize
-    stop_cpu_monitor()
     logger.info("Machine learning pipeline completed successfully.")
 
 

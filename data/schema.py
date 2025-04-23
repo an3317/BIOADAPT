@@ -1,37 +1,27 @@
-"""
-data/schema.py
-==============
-
-Pandera schema definitions describing *exactly* what the pipeline expects
-from any raw CSV before modelling begins.
-
-This schema is used to validate the data at various stages of the pipeline, including during training and testing.
-"""
-
 import pandera as pa
 from pandera import Column, DataFrameSchema, Check
 
+# explicit checks
+is_age      = Check.in_range(0, 120)
+is_sex      = Check.isin(["M", "F"])
+is_response = Check.isin([0, 1])
 
-# --- Example primary training‑data schema ----------------------------- #
+# regex that matches every column *except* response|age|sex
+other_cols_pattern = r"^(?!response$|age$|sex$).*"
+
 training_schema = DataFrameSchema(
     {
-        # --- meta or ID columns --------------------------------------- #
-        "patient_id": Column(pa.String, nullable=True, coerce=True, required=False),
-
-        # --- demographic features ------------------------------------- #
-        "age": Column(pa.Float, Check.in_range(0, 120)),
-        "sex": Column(pa.String, Check.isin(["M", "F"])),
-
-        # --- numeric biomarkers --------------------------------------- #
-        "biomarker_1": Column(pa.Float, nullable=True),
-        "biomarker_2": Column(pa.Float, nullable=True),
-
-        # --- batch column (optional) ---------------------------------- #
-        "batch": Column(pa.String, nullable=True, required=False),
-
-        # --- response -------------------------------------------------- #
-        "response": Column(pa.Int, Check.isin([0, 1])),
+        "response": Column(pa.Int, is_response, coerce=True),
+        "age":      Column(pa.Float, is_age,   nullable=True, required=False, coerce=True),
+        "sex":      Column(pa.String, is_sex,  nullable=True, required=False, coerce=True),
+        other_cols_pattern: Column(
+            pa.Float,
+            nullable=True,
+            required=False,
+            coerce=True,
+            regex=True,   # wildcard rule applies only to “other” cols
+        ),
     },
-    strict=False,          # allow extra columns, we’ll drop or keep later
-    coerce=True            # auto‑convert dtypes where possible
+    strict=False,
+    coerce=True,
 )
