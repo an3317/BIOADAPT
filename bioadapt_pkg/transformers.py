@@ -23,55 +23,66 @@ def combat_batch_correction(data: pd.DataFrame, batch_info: pd.Series) -> pd.Dat
         corrected.loc[mask] = data.loc[mask] - batch_mean
     return corrected
 
-class Log2NormalizationAndBatchCorrectionTransformer(BaseEstimator, TransformerMixin):
+class Log2OrZscoreTransformer(BaseEstimator, TransformerMixin):
     """
-    Transformer that applies log2(x+1) normalization safely, then batch-correction if a batch column exists.
+    * If the combined numeric matrix contains ANY negative value,
+      use z-score normalisation ( (x-μ)/σ ).
+    * Otherwise use log₂(x+1) normalisation.
+    * In both cases, NaN/inf/-inf are replaced with the column median,
+      then (if still NaN) with 0.0 so downstream sklearn never sees NaNs.
+    * Optional batch-mean subtraction if 'batch' column exists.
+    """
 
-    - If X is a single DataFrame:
-        * Without a 'batch' column: only log2 normalization.
-        * With 'batch': log2 then combat_batch_correction.
-    - If X is a list of DataFrames: each is normalized, concatenated, then batch-corrected if 'batch' exists.
-    """
-    def __init__(self, batch_col: str = 'batch'):
+    def __init__(self, batch_col: str = "batch"):
         self.batch_col = batch_col
+        self._use_zscore = None  # set in fit
 
-    def safe_log2_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        # Apply log2(x+1) to numeric cols, replace inf/NaN with column median
-        df_num = df.select_dtypes(include=[np.number])
-        transformed = np.log2(df_num + 1).replace([np.inf, -np.inf], np.nan)
-        for col in transformed.columns:
-            median = transformed[col].median()
-            transformed[col] = transformed[col].fillna(median)
-        df = df.copy()
-        df[transformed.columns] = transformed
-        return df
+    # ---------- helpers -------------------------------------------------
+    @staticmethod
+    def _replace_bad(values: pd.DataFrame) -> pd.DataFrame:
+        values = values.replace([np.inf, -np.inf], np.nan)
+        for c in values.columns:
+            median = values[c].median()
+            values[c] = values[c].fillna(median if not np.isnan(median) else 0.0)
+        return values
 
+    def _combat(self, df: pd.DataFrame, batch: pd.Series) -> pd.DataFrame:
+        """very simple mean-centering per batch label"""
+        corrected = df.copy()
+        for b in batch.unique():
+            mask = batch == b
+            corrected.loc[mask] = df.loc[mask] - df.loc[mask].mean()
+        return corrected
+    # --------------------------------------------------------------------
+
+    # sklearn API
     def fit(self, X, y=None):
-        return self  # stateless
+        df = pd.concat(X, ignore_index=True) if isinstance(X, list) else X.copy()
+        num = df.select_dtypes(include=[np.number])
+        self._use_zscore = (num < 0).any().any()
+        return self  # stateless w.r.t parameters
 
     def transform(self, X, y=None):
-        # Handle list of DataFrames
         if isinstance(X, list):
-            dfs = [self.safe_log2_transform(pd.DataFrame(df)) for df in X]
-            merged = pd.concat(dfs, ignore_index=True)
-            if self.batch_col in merged.columns:
-                batch_info = merged[self.batch_col]
-                num_cols = merged.select_dtypes(include=[np.number]).columns
-                corrected = combat_batch_correction(merged[num_cols], batch_info)
-                merged[num_cols] = corrected
-            return merged
+            frames = [self.transform(df) for df in X]
+            return pd.concat(frames, ignore_index=True)
 
-        # Single DataFrame case
-        if isinstance(X, pd.DataFrame):
-            df = self.safe_log2_transform(X.copy())
-            if self.batch_col in df.columns:
-                batch_info = df[self.batch_col]
-                num_cols = df.select_dtypes(include=[np.number]).columns
-                corrected = combat_batch_correction(df[num_cols], batch_info)
-                df[num_cols] = corrected
-            return df
+        df = X.copy()
+        num_cols = df.select_dtypes(include=[np.number]).columns
 
-        raise ValueError("Input must be a DataFrame or list of DataFrames")
+        if self._use_zscore:
+            df[num_cols] = (df[num_cols] - df[num_cols].mean()) / df[num_cols].std(ddof=0)
+        else:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                df[num_cols] = np.log2(df[num_cols] + 1)
+
+        df[num_cols] = self._replace_bad(df[num_cols])
+
+        if self.batch_col in df.columns:
+            df[num_cols] = self._combat(df[num_cols], df[self.batch_col])
+
+        return df
+
 
 # -----------------------------
 # Feature Outlier Remover

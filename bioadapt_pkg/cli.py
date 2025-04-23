@@ -2,8 +2,8 @@
 import click
 from pathlib import Path
 
-from pipeline.config_loader import load_config
-from pipeline.core import machine_learning_pipeline
+from bioadapt_pkg.config_loader import load_config
+from bioadapt_pkg.core import machine_learning_pipeline
 
 @click.group()
 def cli():

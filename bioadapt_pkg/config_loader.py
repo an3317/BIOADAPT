@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 import yaml
-import tomli  # optional: support pyproject.toml config later
 
 @dataclass
 class CVConfig:
@@ -15,6 +14,22 @@ class PipelineConfig:
     feature_selection: str
     use_outlier_detection: bool
     output_folder: Path
+    # pipeline/config_loader.py  (only the relevant part)
+
+@dataclass
+class PipelineConfig:
+    algorithm: str
+    feature_selection: str
+    use_outlier_detection: bool = False
+    outlier_method: str | None = None
+    iqr_threshold: float = 0.05
+    zscore_threshold: float = 0.05
+    zscore_limit: float = 3.0
+    iso_forest_threshold: float = 0.05
+    pca_reconstruction_error_threshold: float = 0.1
+    n_components_pca: int | None = None
+    output_folder: Path = Path("results")
+
 
 @dataclass
 class DataConfig:
