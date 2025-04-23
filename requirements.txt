@@ -1,5 +1,4 @@
 annotated-types==0.7.0
--e git+https://github.com/an3317/BIOADAPT.git@d830f610f5d675c0f63aeeab195efc650f3720c8#egg=bioadapt
 cachetools==5.5.2
 certifi==2025.1.31
 charset-normalizer==3.4.1
