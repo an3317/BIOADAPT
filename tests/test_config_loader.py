@@ -1,5 +1,5 @@
 from pathlib import Path
-from pipeline.config_loader import load_config
+from bioadapt_pkg.config_loader import load_config
 
 def test_load_config_outlier_fields(tmp_path):
     cfg_path = tmp_path / "mini.yaml"
