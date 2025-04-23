@@ -563,9 +563,6 @@ def track_time(func):
     return wrapper
 
 @track_time
-# pipeline/core.py
-
-
 
 def machine_learning_pipeline(cfg: Config) -> None:
     """Run the end‑to‑end ML pipeline based on a Config object."""
@@ -576,6 +573,9 @@ def machine_learning_pipeline(cfg: Config) -> None:
     selected_feature_selection = cfg.pipeline.feature_selection
     output_folder = str(cfg.pipeline.output_folder)
     random_seeds = cfg.cv.random_seeds
+    use_outlier_detection = cfg.pipeline.use_outlier_detection
+    outlier_method = cfg.pipeline.outlier_method
+
 
     # 2) Set up logging
     logger = setup_logger(Path(output_folder) / "run.log")
@@ -628,14 +628,15 @@ def machine_learning_pipeline(cfg: Config) -> None:
     use_outlier_detection = cfg.pipeline.use_outlier_detection
     outlier_method = getattr(cfg.pipeline, 'outlier_method', None)
     if use_outlier_detection and outlier_method:
-        logger.info(f"Starting outlier detection using method: {outlier_method}")
-        outlier_remover_instance = FeatureOutlierRemover(method=outlier_method,
-                                                         iqr_threshold=cfg.pipeline.iqr_threshold,
-                                                         zscore_threshold=cfg.pipeline.zscore_threshold,
-                                                         zscore_limit=cfg.pipeline.zscore_limit,
-                                                         iso_forest_threshold=cfg.pipeline.iso_forest_threshold,
-                                                         pca_reconstruction_error_threshold=cfg.pipeline.pca_reconstruction_error_threshold,
-                                                         n_components_pca=cfg.pipeline.n_components_pca)
+        outlier_remover_instance = FeatureOutlierRemover(
+            method=outlier_method,
+            iqr_threshold=cfg.pipeline.iqr_threshold,
+            zscore_threshold=cfg.pipeline.zscore_threshold,
+            zscore_limit=cfg.pipeline.zscore_limit,
+            iso_forest_threshold=cfg.pipeline.iso_forest_threshold,
+            pca_reconstruction_error_threshold=cfg.pipeline.pca_reconstruction_error_threshold,
+            n_components_pca=cfg.pipeline.n_components_pca,
+        )
         X_temp = outlier_remover_instance.fit_transform(X)
         n_features = X_temp.shape[1]
         logger.info(f"After outlier detection, number of features: {n_features}")
