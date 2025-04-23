@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from fpdf import FPDF
 from tqdm import tqdm
 import psutil
+from sklearn.impute import SimpleImputer
 from joblib import Parallel, delayed
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import StratifiedKFold, GridSearchCV, cross_val_score, cross_val_predict
@@ -653,8 +654,9 @@ def machine_learning_pipeline(cfg: Config) -> None:
     fs_step = get_feature_selection_step(selected_feature_selection)
     model = get_model(selected_algorithm)
     steps = [
-        ('norm_batch_corr', Log2NormalizationAndBatchCorrectionTransformer(batch_col='batch')),
-        ('scaler', StandardScaler())
+        ('norm', Log2OrZscoreTransformer(batch_col='batch')),
+        ('scaler', StandardScaler()),
+        ('imputer', SimpleImputer(strategy="median")),   # <- NEW: final NaN guard
     ]
     if sampler:
         steps.append(('sampler', sampler))
