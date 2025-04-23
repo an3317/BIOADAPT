@@ -27,7 +27,7 @@ from bioadapt_pkg.utils import ensure_directory_exists
 def plot_gradient_importance(features, output_folder, top_n=10):
     top_features = features.head(top_n)
     plt.figure(figsize=(10, 6))
-    sns.barplot(x=top_features['variance'], y=top_features['feature'], palette='viridis')
+    sns.barplot(x=top_features['variance'], y=top_features['feature'], hue=top_features['feature'], palette='viridis', legend=False)
     plt.title('Gradient Importance Variance')
     plt.xlabel('Variance')
     plt.ylabel('Features')
@@ -124,7 +124,7 @@ def plot_permutation_importance(best_model, X, y, selected_features, output_fold
         top_importances = perm_importance.importances_mean[perm_sorted_idx[:top_n]]
         plt.figure(figsize=(10, 6))
         plot_df = pd.DataFrame({'feature': top_features, 'importance': top_importances})
-        sns.barplot(data=plot_df, x='importance', y='feature', palette='plasma')
+        sns.barplot(data=plot_df, x='importance', y='feature', hue='feature', palette='plasma', legend=False)
         plt.title('Permutation Feature Importance')
         plt.xlabel('Importance Score (Mean)')
         plt.ylabel('Features')
