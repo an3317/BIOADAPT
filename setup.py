@@ -5,8 +5,9 @@ setup(
     version="0.1.0",
     packages=find_packages(include=["bioadapt_pkg", "bioadapt_pkg.*"]),
     entry_points={
-        "console_scripts": [
-            "bioadapt = bioadapt_pkg.cli:cli",
-        ],
+    "console_scripts": [
+        "bioadapt = bioadapt_pkg.cli:cli",
+        "bioadapt-evaluate = bioadapt_pkg.evaluate:evaluate",
+    ],
     },
 )

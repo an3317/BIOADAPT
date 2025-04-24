@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 import yaml
+from typing import Optional
 
 @dataclass
 class CVConfig:
@@ -23,11 +24,11 @@ class PipelineConfig:
     n_components_pca: int | None = None
     output_folder: Path = Path("results")
 
-
 @dataclass
 class DataConfig:
     paths: List[Path]
     response: str
+    independent_test_path: Optional[Path] = None
 
 @dataclass
 class Config:

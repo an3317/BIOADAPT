@@ -111,7 +111,8 @@ def machine_learning_pipeline(cfg: Config) -> None:
     random_seeds         = cfg.cv.random_seeds
 
     # ───────────────────────── 2) logging & IO ─────────────────────────────
-    output_root.mkdir(parents=True, exist_ok=True)
+    algo_fs  = output_root / f"{cfg.pipeline.algorithm}_{cfg.pipeline.feature_selection}"
+    algo_fs.mkdir(parents=True, exist_ok=True)
     logger = setup_logger(output_root / "run.log")
     logger.info("Pipeline started")
     logger.debug("Config: %s", cfg)
@@ -207,7 +208,7 @@ def machine_learning_pipeline(cfg: Config) -> None:
     seed_progress = tqdm(total=len(random_seeds), desc="Pipeline progress", unit="seed")
 
     for seed in random_seeds:
-        seed_run_folder = output_root / f"seed_{seed}"
+        seed_run_folder = algo_fs / f"seed_{seed}"
         seed_run_folder.mkdir(parents=True, exist_ok=True)
         logger.info("► Seed %d — output: %s", seed, seed_run_folder)
 

@@ -1,7 +1,8 @@
 # config.yaml  (place at repo root)
 data:
   paths:
-    - data/train.csv        # relative or absolute
+    - data/train.csv
+  independent_test_path: data/test.csv        # relative or absolute
   response: response        # name of target column
 
 pipeline:
