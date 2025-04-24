@@ -9,7 +9,7 @@ import pandas as pd
 
 from bioadapt_pkg.config_loader import load_config
 from bioadapt_pkg.core import machine_learning_pipeline
-from bioadapt_pkg.evaluation import evaluate_on_independent_dataset
+from bioadapt_pkg.evaluate import evaluate_on_independent_dataset
 
 # ——————————————————————————————————————————————————————————————
 # configure root logger
