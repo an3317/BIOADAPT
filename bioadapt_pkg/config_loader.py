@@ -13,7 +13,8 @@ class CVConfig:
 class PipelineConfig:
     algorithm: str
     feature_selection: str
-    explain: str = "none"                # ← add this!
+    explain: str = "none"   
+    run_extra_analysis: bool = True           
     use_outlier_detection: bool = False
     outlier_method: str | None = None
     iqr_threshold: float = 0.05

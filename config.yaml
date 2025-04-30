@@ -1,7 +1,7 @@
 # config.yaml  (place at repo root)
 data:
   paths:
-    - data/train.csv
+    - data/I09_3.csv
   independent_test_path: data/test.csv        # relative or absolute
   response: response        # name of target column
 
@@ -14,13 +14,14 @@ pipeline:
     # --- outlier-detection config ----------------
   use_outlier_detection: false           # true / false
   outlier_method: pca                   # iqr | zscore | isolation_forest | pca 
-  iqr_threshold: 0.05                   #pca works
+  iqr_threshold: 0.05                   # pca works
   zscore_threshold: 0.05
   zscore_limit: 3.0
   iso_forest_threshold: 0.05
   pca_reconstruction_error_threshold: 0.3
   n_components_pca: 3                # null -> auto
-  explain: shap      # none | shap | permutation
+  explain: none      # none | shap 
+  run_extra_analysis: false  # disables all report generation & plots
 
 cv:
   random_seeds: [42, 43, 44, 45, 46]
