@@ -262,7 +262,7 @@ def machine_learning_pipeline(cfg: Config) -> None:
             shap_png, shap_html = shap_explain(
                 best_model,
                 X,
-                selected_features,           # <-- only these columns
+                selected_features,          
                 seed_run_folder / "shap",
                 max_samples=100
             )
@@ -270,12 +270,13 @@ def machine_learning_pipeline(cfg: Config) -> None:
             extra_files.append(str(shap_html))
 
 
-        grad_png, ice_pngs = run_gradient_analysis(best_model, X, selected_features, seed_run_folder)
-        perm_png = plot_permutation_importance(best_model, X, y, selected_features, seed_run_folder)
-        perf_pngs = integrate_into_pipeline(X, y, selected_features,
-                                            best_model.named_steps["est"], seed_run_folder)
+        if cfg.pipeline.run_extra_analysis:
+            grad_png, ice_pngs = run_gradient_analysis(best_model, X, selected_features, seed_run_folder)
+            perm_png = plot_permutation_importance(best_model, X, y, selected_features, seed_run_folder)
+            perf_pngs = integrate_into_pipeline(X, y, selected_features,
+                                                best_model.named_steps["est"], seed_run_folder)
 
-        images.extend([str(grad_png), str(perm_png), *map(str, ice_pngs), *map(str, perf_pngs)])
+            images.extend([str(grad_png), str(perm_png), *map(str, ice_pngs), *map(str, perf_pngs)])
 
         cm_png = seed_run_folder / "cv_confusion.png"
         plt.figure(figsize=(8, 6))
@@ -340,7 +341,6 @@ def main():
     parser = argparse.ArgumentParser(description="Run ML pipeline with optional outlier detection and extra analysis.")
     parser.add_argument('--algorithm', required=True, help='Algorithm name, e.g., svm, cart, etc.')
     parser.add_argument('--feature_selection', required=True, help='Feature selection method, e.g., anova, lasso.')
-    # Allow multiple dataset paths
     parser.add_argument('--data_path', required=True, nargs='+', help='Path(s) to CSV dataset(s).')
     parser.add_argument('--response', required=True, help='Name of response column in dataset.')
     parser.add_argument('--output_folder', required=True, help='Where to save results.')
